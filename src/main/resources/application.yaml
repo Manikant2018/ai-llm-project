@@ -1,0 +1,78 @@
+spring:
+  application:
+    name: demo
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driverClassName: org.h2.Driver
+    username: sa
+    password: 
+  h2:
+    console:
+      enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: update
+  ai:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY}
+      chat:
+        options:
+          model: claude-3-5-sonnet-20241022
+    openai:
+      api-key: ${GROK_API_KEY}
+      base-url: https://api.x.ai
+      chat:
+        options:
+          model: grok-3
+gemini:
+  api:
+    key:  ${GEMINI_API_KEY}
+    url:  https://generativelanguage.googleapis.com/v1beta/openai
+    completions:
+      path: /v1/chat/completions
+  model:
+    name: gemini-3.5-flash
+
+groq:
+  api:
+    key: ${GROQ_API_KEY}
+    url: https://api.groq.com/openai
+    completions:
+      path: /v1/chat/completions
+  model:
+    chat: llama-3.3-70b-versatile
+    whisper: whisper-large-v3
+    tts: aura-asteria-en
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      geminiService:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowType: COUNT_BASED
+        minimumNumberOfCalls: 5
+        waitDurationInOpenState: 20s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    org:
+      springframework:
+        web: DEBUG
+
+server:
+  servlet:
+    context-path: /api
+  port: 8080
