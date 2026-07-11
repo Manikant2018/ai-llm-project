@@ -1,6 +1,6 @@
 package com.ai.interaction.controller;
 
-import com.ai.interaction.entity.AIInteraction;
+import com.ai.interaction.model.Message;
 import com.ai.interaction.repository.AIInteractionRepository;
 import com.ai.interaction.service.GeminiInteractionService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Advanced AI Orchestrator Controller for Gemini Interactions.
@@ -36,8 +37,8 @@ public class GeminiInteractionController {
     public Map<String, Object> interact(
             @RequestParam String message,
             @RequestParam(required = false) String interactionId,
-            @RequestParam(required = false) MultipartFile file) {
-        return interactionService.interact(message, interactionId);
+            @RequestParam(required = false) MultipartFile file) throws ExecutionException, InterruptedException {
+        return interactionService.interact(message, interactionId).get();
     }
 
 
@@ -45,7 +46,7 @@ public class GeminiInteractionController {
      * History endpoint to retrieve persisted conversations from the H2 database.
      */
     @GetMapping("/history")
-    public List<AIInteraction> getHistory(@RequestParam String interactionId) {
+    public List<Message> history(@RequestParam String interactionId) {
         return repository.findByInteractionIdOrderByTimestampAsc(interactionId);
     }
 }
