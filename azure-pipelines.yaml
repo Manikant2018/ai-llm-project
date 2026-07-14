@@ -1,0 +1,192 @@
+# Azure Pipelines for Spring Boot AI Interaction Project
+
+trigger:
+  - main # Trigger on pushes to the main branch
+
+pool:
+  vmImage: 'ubuntu-latest' # Use a Linux agent (e.g., Ubuntu 22.04)
+
+variables:
+  # Define variables here or link to a variable group in Azure DevOps.
+  # For sensitive values like API keys, use Azure Key Vault or Azure DevOps variable groups
+  # and mark them as secret.
+  # Example:
+  # GEMINI_API_KEY: $(GeminiApiKey) # Assuming 'GeminiApiKey' is a secret variable in a variable group
+  # OPENAI_API_KEY: $(OpenAIApiKey) # Assuming 'OpenAIApiKey' is a secret variable in a variable group
+  # AZURE_WEBAPP_NAME: 'ai-interaction-app' # Example for Azure App Service deployment
+  # AZURE_RESOURCE_GROUP: 'ai-project-rg'
+  JAVA_VERSION: '17'
+  MAVEN_CACHE_FOLDER: '$(HOME)/.m2/repository'
+  MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+  # SonarQube specific variables (replace placeholders)
+  SONAR_QUBE_SERVICE_CONNECTION: 'Your SonarQube Service Connection' # Name of your SonarQube service connection
+  SONAR_QUBE_PROJECT_KEY: 'ai-project' # Your SonarQube project key
+  SONAR_QUBE_PROJECT_NAME: 'AI Interaction Project' # Your SonarQube project name
+  # SONAR_QUBE_TOKEN: $(SonarQubeToken) # Define this as a secret variable in Azure DevOps
+
+stages:
+- stage: Build
+  displayName: Build Project
+  jobs:
+  - job: BuildJob
+    displayName: Build Spring Boot App
+    steps:
+    - task: JavaToolInstaller@0
+      displayName: 'Install Java $(JAVA_VERSION)'
+      inputs:
+        versionSpec: '$(JAVA_VERSION)'
+        jdkArchitecture: 'x64'
+
+    - task: Cache@2
+      displayName: 'Cache Maven packages'
+      inputs:
+        key: 'maven | "$(Agent.OS)" | **/pom.xml'
+        path: '$(MAVEN_CACHE_FOLDER)'
+        restoreKeys: 'maven | "$(Agent.OS)"'
+
+    - task: Maven@4
+      displayName: 'Maven Build'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'clean install'
+        options: '$(MAVEN_OPTS) -DskipTests' # Skip tests during build for faster feedback
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifacts'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+      condition: succeededOrFailed() # Publish artifacts even if tests fail
+
+- stage: Test
+  displayName: Run Tests
+  jobs:
+  - job: TestJob
+    displayName: Run Unit and Integration Tests
+    steps:
+    - task: JavaToolInstaller@0
+      displayName: 'Install Java $(JAVA_VERSION)'
+      inputs:
+        versionSpec: '$(JAVA_VERSION)'
+        jdkArchitecture: 'x64'
+
+    - task: Cache@2
+      displayName: 'Cache Maven packages'
+      inputs:
+        key: 'maven | "$(Agent.OS)" | **/pom.xml'
+        path: '$(MAVEN_CACHE_FOLDER)'
+        restoreKeys: 'maven | "$(Agent.OS)"'
+
+    - task: Maven@4
+      displayName: 'Maven Test'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'test'
+        options: '$(MAVEN_OPTS)'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        # If you have JaCoCo configured in your pom.xml for code coverage:
+        # codeCoverageTool: 'JaCoCo'
+        # codeCoverageClassFiles: '**/target/classes/**/*.class'
+        # codeCoverageSourceFiles: '**/src/main/java/**/*.java'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+
+- stage: CodeQualityAndSecurity
+  displayName: Code Quality & Security Scan
+  jobs:
+  - job: ScanJob
+    displayName: Run Scans
+    steps:
+    - task: JavaToolInstaller@0
+      displayName: 'Install Java $(JAVA_VERSION)'
+      inputs:
+        versionSpec: '$(JAVA_VERSION)'
+        jdkArchitecture: 'x64'
+
+    - task: Cache@2
+      displayName: 'Cache Maven packages'
+      inputs:
+        key: 'maven | "$(Agent.OS)" | **/pom.xml'
+        path: '$(MAVEN_CACHE_FOLDER)'
+        restoreKeys: 'maven | "$(Agent.OS)"'
+
+    # SonarQube Analysis
+    - task: SonarQubePrepare@5
+      displayName: 'Prepare SonarQube Analysis'
+      inputs:
+        SonarQube: '$(SONAR_QUBE_SERVICE_CONNECTION)'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        cliProjectKey: '$(SONAR_QUBE_PROJECT_KEY)'
+        cliProjectName: '$(SONAR_QUBE_PROJECT_NAME)'
+        cliSources: '.'
+        # If you have a SonarQube token as a variable, you can pass it here
+        # extraProperties: |
+        #   sonar.login=$(SONAR_QUBE_TOKEN)
+
+    - task: Maven@4
+      displayName: 'Run SonarQube Analysis'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'clean verify sonar:sonar'
+        options: '$(MAVEN_OPTS) -Dsonar.login=$(SONAR_QUBE_TOKEN)' # Pass token if defined as a secret variable
+
+    - task: SonarQubePublish@5
+      displayName: 'Publish SonarQube Results'
+      inputs:
+        pollingTimeoutSec: '300' # Wait for analysis to complete
+
+    # OWASP Dependency-Check
+    - task: DependencyCheck_1_0_0@1 # This task needs to be installed from the Azure DevOps Marketplace
+      displayName: 'Run OWASP Dependency-Check'
+      inputs:
+        projectName: '$(SONAR_QUBE_PROJECT_NAME)' # Reusing project name
+        scanPath: '$(System.DefaultWorkingDirectory)'
+        format: 'HTML,XML' # Generate both HTML for readability and XML for potential integration
+        outputDirectory: '$(Build.ArtifactStagingDirectory)/DependencyCheckReports'
+        # Optional: Fail build if CVSS score is above a threshold (e.g., 7)
+        # failOnCVSS: '7'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Dependency-Check Reports'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/DependencyCheckReports'
+        ArtifactName: 'DependencyCheckReports'
+        publishLocation: 'Container'
+      condition: succeededOrFailed() # Publish reports even if scan finds issues
+
+# - stage: Deploy
+#   displayName: Deploy Application
+#   jobs:
+#   - deployment: DeployJob
+#     displayName: Deploy to Azure App Service
+#     environment: 'production' # Link to an Azure DevOps environment
+#     strategy:
+#       runOnce:
+#         deploy:
+#           steps:
+#           - task: DownloadBuildArtifacts@1
+#             displayName: 'Download Build Artifacts'
+#             inputs:
+#               artifactName: 'drop'
+#               pathtoDownload: '$(System.DefaultWorkingDirectory)/_build_artifacts'
+
+#           - task: AzureWebApp@1
+#             displayName: 'Deploy Azure Web App'
+#             inputs:
+#               azureSubscription: 'Your Azure Service Connection Name' # Name of your Azure service connection
+#               appName: '$(AZURE_WEBAPP_NAME)'
+#               resourceGroupName: '$(AZURE_RESOURCE_GROUP)'
+#               package: '$(System.DefaultWorkingDirectory)/_build_artifacts/**/*.jar' # Path to your JAR file
+#               # Startup command for Spring Boot JARs
+#               startupCommand: 'java -jar $(System.DefaultWorkingDirectory)/_build_artifacts/ai-project-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod'
+#               # Pass environment variables for API keys securely
+#               # appSettings: '-GEMINI_API_KEY $(GeminiApiKey) -OPENAI_API_KEY $(OpenAIApiKey)'
