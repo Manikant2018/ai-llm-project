@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  ai-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      SPRING_PROFILES_ACTIVE: docker # Activate the 'docker' profile for PostgreSQL
+    depends_on:
+      db:
+        condition: service_healthy # Ensure DB is healthy before starting app
+    networks:
+      - ai-network
+    healthcheck: # Health check for the Spring Boot app
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s # Give the app some time to start up
+    deploy: # Resource limits
+      resources:
+        limits:
+          cpus: '0.5' # 50% of one CPU core
+          memory: '1024M' # 1GB of RAM
+
+  db:
+    image: postgres:15-alpine # Use a lightweight PostgreSQL image
+    hostname: db
+    environment:
+      POSTGRES_DB: ai_project_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - db_data:/var/lib/postgresql/data # Named volume for persistent data
+    networks:
+      - ai-network
+    healthcheck: # Health check for PostgreSQL
+      test: ["CMD-SHELL", "pg_isready -U user -d ai_project_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy: # Resource limits
+      resources:
+        limits:
+          cpus: '0.25' # 25% of one CPU core
+          memory: '512M' # 512MB of RAM
+
+networks:
+  ai-network:
+    driver: bridge
+
+volumes:
+  db_data: # Named volume definition

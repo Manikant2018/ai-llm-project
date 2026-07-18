@@ -2,7 +2,6 @@ package com.ai.interaction.service;
 
 import com.ai.interaction.model.Message;
 import com.ai.interaction.repository.MessageRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -26,13 +25,6 @@ public class GeminiInteractionService {
     private static final Logger LOGGER = Logger.getLogger(GeminiInteractionService.class.getName());
     private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 1000; // 1 second
-
-    private final RestClient restClient;
-    private final String apiKey;
-    private final String modelName;
-    private final MessageRepository messageRepository;
-    private final ObjectMapper objectMapper; // Re-introducing ObjectMapper
-
     // Define the tools available to Gemini
     private static final List<Map<String, Object>> TOOL_DEFINITIONS = List.of(
             Map.of(
@@ -68,12 +60,17 @@ public class GeminiInteractionService {
                     )
             )
     );
+    private final RestClient restClient;
+    private final String apiKey;
+    private final String modelName;
+    private final MessageRepository messageRepository;
+    private final ObjectMapper objectMapper; // Re-introducing ObjectMapper
 
 
     public GeminiInteractionService(@Value("${gemini.api.key}") String apiKey,
-                                   @Value("${gemini.model.name}") String modelName,
-                                   MessageRepository messageRepository,
-                                   ObjectMapper objectMapper) { // Inject ObjectMapper
+                                    @Value("${gemini.model.name}") String modelName,
+                                    MessageRepository messageRepository,
+                                    ObjectMapper objectMapper) { // Inject ObjectMapper
         this.apiKey = apiKey;
         this.modelName = modelName;
         this.restClient = RestClient.builder()
@@ -130,7 +127,8 @@ public class GeminiInteractionService {
                                     .build())
                             .body(body)
                             .retrieve()
-                            .body(new ParameterizedTypeReference<Map<String, Object>>() {});
+                            .body(new ParameterizedTypeReference<Map<String, Object>>() {
+                            });
                     LOGGER.log(Level.INFO, "Received response from Gemini API for interactionId {0}: {1}", new Object[]{interactionId, responseBody});
                     break; // Success, exit retry loop
                 } catch (RestClientException e) {
@@ -302,7 +300,8 @@ public class GeminiInteractionService {
                                 .build())
                         .body(requestBody)
                         .retrieve()
-                        .body(new ParameterizedTypeReference<Map<String, Object>>() {});
+                        .body(new ParameterizedTypeReference<Map<String, Object>>() {
+                        });
                 LOGGER.log(Level.INFO, "Received response from Gemini API for interactionId {0}: {1}", new Object[]{interactionId, responseBody});
                 break; // Success, exit retry loop
             } catch (RestClientException e) {
