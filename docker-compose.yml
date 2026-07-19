@@ -11,49 +11,101 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
-      SPRING_PROFILES_ACTIVE: docker # Activate the 'docker' profile for PostgreSQL
+      SPRING_PROFILES_ACTIVE: docker
     depends_on:
       db:
-        condition: service_healthy # Ensure DB is healthy before starting app
+        condition: service_healthy
     networks:
       - ai-network
-    healthcheck: # Health check for the Spring Boot app
+    healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 20s # Give the app some time to start up
-    deploy: # Resource limits
+      start_period: 20s
+    deploy:
       resources:
         limits:
-          cpus: '0.5' # 50% of one CPU core
-          memory: '1024M' # 1GB of RAM
+          cpus: '0.5'
+          memory: '1024M'
 
   db:
-    image: postgres:15-alpine # Use a lightweight PostgreSQL image
+    image: postgres:15-alpine
     hostname: db
     environment:
       POSTGRES_DB: ai_project_db
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
     volumes:
-      - db_data:/var/lib/postgresql/data # Named volume for persistent data
+      - db_data:/var/lib/postgresql/data
     networks:
       - ai-network
-    healthcheck: # Health check for PostgreSQL
+    healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d ai_project_db"]
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy: # Resource limits
+    deploy:
       resources:
         limits:
-          cpus: '0.25' # 25% of one CPU core
-          memory: '512M' # 512MB of RAM
+          cpus: '0.25'
+          memory: '512M'
+
+  prometheus:
+    image: prom/prometheus:v2.47.1 # Use a specific version
+    hostname: prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090" # Prometheus UI
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml # Mount your config file
+      - prometheus_data:/prometheus # Persistent storage for Prometheus data
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=false'
+      - '--web.console.templates=false'
+    networks:
+      - ai-network
+    depends_on:
+      ai-app:
+        condition: service_healthy # Scrape metrics only when app is healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: '512M'
+
+  grafana:
+    image: grafana/grafana:10.2.2 # Use a specific version
+    hostname: grafana
+    container_name: grafana
+    ports:
+      - "3000:3000" # Grafana UI
+    volumes:
+      - grafana_data:/var/lib/grafana # Persistent storage for Grafana data
+    environment:
+      # Configure Grafana to automatically add Prometheus as a data source
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_AUTH_ANONYMOUS_ENABLED: "true" # Enable anonymous access for easy demo
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    networks:
+      - ai-network
+    depends_on:
+      prometheus:
+        condition: service_healthy # Grafana needs Prometheus to be up
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: '1024M'
 
 networks:
   ai-network:
     driver: bridge
 
 volumes:
-  db_data: # Named volume definition
+  db_data:
+  prometheus_data: # Named volume for Prometheus data
+  grafana_data: # Named volume for Grafana data

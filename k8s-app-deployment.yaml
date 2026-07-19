@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-app-deployment
+  labels:
+    app: ai-app
+spec:
+  replicas: 1 # Start with 1 replica, can scale later
+  selector:
+    matchLabels:
+      app: ai-app
+  template:
+    metadata:
+      labels:
+        app: ai-app
+    spec:
+      containers:
+        - name: ai-app
+          image: ai-app:1.0 # Use the image built into Minikube's Docker daemon
+          imagePullPolicy: Never # Tell Kubernetes not to try pulling from Docker Hub
+          ports:
+            - containerPort: 8080
+          env:
+            # Pass API keys as environment variables
+            # In a real cluster, use Kubernetes Secrets for sensitive data
+            - name: GEMINI_API_KEY
+              value: "${GEMINI_API_KEY}" # Kubernetes will read this from your shell env during apply
+            - name: OPENAI_API_KEY
+              value: "${OPENAI_API_KEY}"
+            - name: GROQ_API_KEY
+              value: "${GROQ_API_KEY}"
+            # Database connection details, using the Kubernetes Service name for the DB
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://db-service:5432/ai_project_db
+            - name: SPRING_DATASOURCE_USERNAME
+              value: user
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: password
+            - name: SPRING_PROFILES_ACTIVE
+              value: docker # Activate the docker profile for PostgreSQL settings
+          livenessProbe: # Health check for the application
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe: # Check if the application is ready to serve traffic
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: # Resource limits for the container
+            limits:
+              memory: "1024Mi"
+              cpu: "500m" # 0.5 CPU core
+            requests:
+              memory: "512Mi"
+              cpu: "250m" # 0.25 CPU core
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-app-service
+  labels:
+    app: ai-app
+spec:
+  selector:
+    app: ai-app
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: NodePort # Expose the service outside the cluster via a NodePort

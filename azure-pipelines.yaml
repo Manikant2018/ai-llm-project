@@ -13,16 +13,24 @@ variables:
   # Example:
   # GEMINI_API_KEY: $(GeminiApiKey) # Assuming 'GeminiApiKey' is a secret variable in a variable group
   # OPENAI_API_KEY: $(OpenAIApiKey) # Assuming 'OpenAIApiKey' is a secret variable in a variable group
-  # AZURE_WEBAPP_NAME: 'ai-interaction-app' # Example for Azure App Service deployment
-  # AZURE_RESOURCE_GROUP: 'ai-project-rg'
+  
   JAVA_VERSION: '17'
   MAVEN_CACHE_FOLDER: '$(HOME)/.m2/repository'
   MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+
   # SonarQube specific variables (replace placeholders)
   SONAR_QUBE_SERVICE_CONNECTION: 'Your SonarQube Service Connection' # Name of your SonarQube service connection
   SONAR_QUBE_PROJECT_KEY: 'ai-project' # Your SonarQube project key
   SONAR_QUBE_PROJECT_NAME: 'AI Interaction Project' # Your SonarQube project name
   # SONAR_QUBE_TOKEN: $(SonarQubeToken) # Define this as a secret variable in Azure DevOps
+
+  # NEW: Containerization and AKS Deployment Variables
+  AZURE_SERVICE_CONNECTION: 'Your Azure Service Connection Name' # Name of your Azure Service Connection
+  AZURE_CONTAINER_REGISTRY: 'youracrname.azurecr.io' # e.g., myaicr.azurecr.io
+  IMAGE_REPOSITORY: 'ai-app' # Name of the image in ACR
+  IMAGE_TAG: '$(Build.BuildId)' # Use Azure DevOps Build ID as image tag
+  AKS_CLUSTER_NAME: 'your-aks-cluster-name' # e.g., my-ai-aks
+  KUBERNETES_NAMESPACE: 'default' # Namespace to deploy to in AKS
 
 stages:
 - stage: Build
@@ -86,10 +94,6 @@ stages:
         options: '$(MAVEN_OPTS)'
         publishJUnitResults: true
         testResultsFiles: '**/surefire-reports/TEST-*.xml'
-        # If you have JaCoCo configured in your pom.xml for code coverage:
-        # codeCoverageTool: 'JaCoCo'
-        # codeCoverageClassFiles: '**/target/classes/**/*.class'
-        # codeCoverageSourceFiles: '**/src/main/java/**/*.java'
 
     - task: PublishTestResults@2
       displayName: 'Publish Test Results'
@@ -128,9 +132,6 @@ stages:
         cliProjectKey: '$(SONAR_QUBE_PROJECT_KEY)'
         cliProjectName: '$(SONAR_QUBE_PROJECT_NAME)'
         cliSources: '.'
-        # If you have a SonarQube token as a variable, you can pass it here
-        # extraProperties: |
-        #   sonar.login=$(SONAR_QUBE_TOKEN)
 
     - task: Maven@4
       displayName: 'Run SonarQube Analysis'
@@ -148,12 +149,10 @@ stages:
     - task: DependencyCheck_1_0_0@1 # This task needs to be installed from the Azure DevOps Marketplace
       displayName: 'Run OWASP Dependency-Check'
       inputs:
-        projectName: '$(SONAR_QUBE_PROJECT_NAME)' # Reusing project name
+        projectName: '$(SONAR_QUBE_PROJECT_NAME)'
         scanPath: '$(System.DefaultWorkingDirectory)'
-        format: 'HTML,XML' # Generate both HTML for readability and XML for potential integration
+        format: 'HTML,XML'
         outputDirectory: '$(Build.ArtifactStagingDirectory)/DependencyCheckReports'
-        # Optional: Fail build if CVSS score is above a threshold (e.g., 7)
-        # failOnCVSS: '7'
 
     - task: PublishBuildArtifacts@1
       displayName: 'Publish Dependency-Check Reports'
@@ -161,32 +160,81 @@ stages:
         PathtoPublish: '$(Build.ArtifactStagingDirectory)/DependencyCheckReports'
         ArtifactName: 'DependencyCheckReports'
         publishLocation: 'Container'
-      condition: succeededOrFailed() # Publish reports even if scan finds issues
+      condition: succeededOrFailed()
 
-# - stage: Deploy
-#   displayName: Deploy Application
-#   jobs:
-#   - deployment: DeployJob
-#     displayName: Deploy to Azure App Service
-#     environment: 'production' # Link to an Azure DevOps environment
-#     strategy:
-#       runOnce:
-#         deploy:
-#           steps:
-#           - task: DownloadBuildArtifacts@1
-#             displayName: 'Download Build Artifacts'
-#             inputs:
-#               artifactName: 'drop'
-#               pathtoDownload: '$(System.DefaultWorkingDirectory)/_build_artifacts'
+- stage: Containerization
+  displayName: Build & Push Container Image
+  dependsOn: CodeQualityAndSecurity # Depends on previous stage
+  jobs:
+  - job: BuildAndPush
+    displayName: Build and Push Docker Image
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push Image to ACR'
+      inputs:
+        containerRegistry: '$(AZURE_SERVICE_CONNECTION)' # Your Azure Service Connection
+        repository: '$(IMAGE_REPOSITORY)'
+        command: 'buildAndPush'
+        Dockerfile: 'Dockerfile'
+        tags: |
+          $(IMAGE_TAG)
+          latest # Also tag as latest
+      env:
+        # Pass API keys as build arguments if needed by Dockerfile (e.g., for multi-stage builds that need them)
+        # DOCKER_BUILDKIT: 1 # Enable BuildKit for advanced features
+        # GEMINI_API_KEY: $(GeminiApiKey)
+        # OPENAI_API_KEY: $(OpenAIApiKey)
+        # GROQ_API_KEY: $(GroqApiKey)
 
-#           - task: AzureWebApp@1
-#             displayName: 'Deploy Azure Web App'
-#             inputs:
-#               azureSubscription: 'Your Azure Service Connection Name' # Name of your Azure service connection
-#               appName: '$(AZURE_WEBAPP_NAME)'
-#               resourceGroupName: '$(AZURE_RESOURCE_GROUP)'
-#               package: '$(System.DefaultWorkingDirectory)/_build_artifacts/**/*.jar' # Path to your JAR file
-#               # Startup command for Spring Boot JARs
-#               startupCommand: 'java -jar $(System.DefaultWorkingDirectory)/_build_artifacts/ai-project-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod'
-#               # Pass environment variables for API keys securely
-#               # appSettings: '-GEMINI_API_KEY $(GeminiApiKey) -OPENAI_API_KEY $(OpenAIApiKey)'
+- stage: ImageSecurityScan
+  displayName: Scan Container Image for Vulnerabilities
+  dependsOn: Containerization # Depends on image being built and pushed
+  jobs:
+  - job: ScanImage
+    displayName: Scan Image with Trivy
+    steps:
+    - task: Trivy@1 # This task needs to be installed from the Azure DevOps Marketplace
+      displayName: 'Scan Image with Trivy'
+      inputs:
+        image: '$(AZURE_CONTAINER_REGISTRY)/$(IMAGE_REPOSITORY):$(IMAGE_TAG)'
+        scanType: 'image'
+        # Optional: Set severity threshold to fail the pipeline
+        # severity: 'HIGH'
+        # exitCode: '1' # Fail pipeline if vulnerabilities of specified severity are found
+        # outputFormat: 'table' # or 'json'
+        # outputFilePath: '$(Build.ArtifactStagingDirectory)/TrivyReports/trivy-report.json'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Trivy Reports'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/TrivyReports'
+        ArtifactName: 'TrivyReports'
+        publishLocation: 'Container'
+      condition: succeededOrFailed()
+
+- stage: Deploy
+  displayName: Deploy Application to AKS
+  dependsOn: ImageSecurityScan # Depends on image being scanned
+  jobs:
+  - deployment: DeployJob
+    displayName: Deploy to AKS
+    environment: 'production' # Link to an Azure DevOps environment (optional)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: Kubernetes@1
+            displayName: 'Deploy to AKS'
+            inputs:
+              connectionType: 'Azure Resource Manager'
+              azureSubscriptionConnection: '$(AZURE_SERVICE_CONNECTION)' # Your Azure Service Connection
+              azureResourceFilteringType: 'ResourceGroup'
+              resourceGroupName: 'your-aks-resource-group' # The resource group where your AKS cluster resides
+              clusterType: 'Managed'
+              clusterName: '$(AKS_CLUSTER_NAME)'
+              namespace: '$(KUBERNETES_NAMESPACE)'
+              command: 'apply'
+              arguments: '-f k8s-app-deployment.yaml -f k8s-db-deployment.yaml -f k8s-monitoring-deployment.yaml' # Apply all your K8s manifests
+              # Optional: Replace image tag in manifests before applying
+              # containers: '$(AZURE_CONTAINER_REGISTRY)/$(IMAGE_REPOSITORY):$(IMAGE_TAG)'
+              # imagePullSecrets: 'your-image-pull-secret' # If AKS needs a secret to pull from ACR (often not needed if ACR is linked to AKS)
